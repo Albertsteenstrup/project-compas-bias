@@ -1171,10 +1171,20 @@ def get_model_summary_metrics(y_true, y_pred, y_pred_proba, sensitive_features, 
     # AUC calculated from prediction probabilities
     auc = roc_auc_score(y_true, y_pred_proba) if y_pred_proba is not None else np.nan
     
+    # Filter for 'African-American' and 'Caucasian' groups for Equalized Odds Difference
+    mask_bw = sensitive_features.isin(['African-American', 'Caucasian'])
+    y_true_bw = y_true[mask_bw]
+    y_pred_bw = y_pred[mask_bw]
+    sensitive_features_bw = sensitive_features[mask_bw]
+
     # Equalized Odds Difference using fairlearn.metrics
     # This considers the differences in FPR and TPR between the unprivileged and privileged groups.
-    eq_odds_diff = equalized_odds_difference(y_true, y_pred, sensitive_features=sensitive_features)
-    
+    # If sensitive_features_bw is empty or has only one group, this might raise an error or return NaN.
+    if len(sensitive_features_bw.unique()) > 1:
+        eq_odds_diff = equalized_odds_difference(y_true_bw, y_pred_bw, sensitive_features=sensitive_features_bw)
+    else:
+        eq_odds_diff = np.nan # Or handle as appropriate if only one or no relevant groups present
+
     # Calculate FPR/FNR for specified groups to include in the table
     metrics_by_group = {}
     for race in races_to_report:
@@ -1272,7 +1282,14 @@ summary_data_list = []
 compas_scores_for_auc = df.loc[X_test.index, 'decile_score']
 acc_compas = accuracy_score(y_test, y_pred_decile)
 roc_auc_compas = roc_auc_score(y_test, compas_scores_for_auc)
-eog_compas = equalized_odds_difference(y_test, y_pred_decile, sensitive_features=sensitive_features_test)
+
+# Filter for Black vs. White for EOG calculation
+mask_bw_compas = sensitive_features_test.isin(['African-American', 'Caucasian'])
+y_test_bw_compas = y_test[mask_bw_compas]
+y_pred_decile_bw = y_pred_decile[mask_bw_compas]
+sensitive_features_test_bw_compas = sensitive_features_test[mask_bw_compas]
+eog_compas = equalized_odds_difference(y_test_bw_compas, y_pred_decile_bw, sensitive_features=sensitive_features_test_bw_compas) if len(sensitive_features_test_bw_compas.unique()) > 1 else np.nan
+
 summary_data_list.append({
     'Model': 'COMPAS (Rule)',
     'Accuracy': acc_compas,
@@ -1284,7 +1301,14 @@ summary_data_list.append({
 # Predictions y_pred and probabilities y_pred_proba are from In[69]
 acc_lr = accuracy_score(y_test, y_pred)
 roc_auc_lr = roc_auc_score(y_test, y_pred_proba) # y_pred_proba is y_proba_lr in In[69]
-eog_lr = equalized_odds_difference(y_test, y_pred, sensitive_features=sensitive_features_test)
+
+# Filter for Black vs. White for EOG calculation
+mask_bw_lr = sensitive_features_test.isin(['African-American', 'Caucasian'])
+y_test_bw_lr = y_test[mask_bw_lr]
+y_pred_bw_lr = y_pred[mask_bw_lr]
+sensitive_features_test_bw_lr = sensitive_features_test[mask_bw_lr]
+eog_lr = equalized_odds_difference(y_test_bw_lr, y_pred_bw_lr, sensitive_features=sensitive_features_test_bw_lr) if len(sensitive_features_test_bw_lr.unique()) > 1 else np.nan
+
 summary_data_list.append({
     'Model': 'Logistic Regression',
     'Accuracy': acc_lr,
@@ -1296,7 +1320,14 @@ summary_data_list.append({
 # Predictions y_pred_xgb and probabilities y_pred_proba_xgb are from In[69b]
 acc_xgb = accuracy_score(y_test, y_pred_xgb)
 roc_auc_xgb_val = roc_auc_score(y_test, y_pred_proba_xgb) # This is roc_auc_xgb in In[69b]
-eog_xgb = equalized_odds_difference(y_test, y_pred_xgb, sensitive_features=sensitive_features_test)
+
+# Filter for Black vs. White for EOG calculation
+mask_bw_xgb = sensitive_features_test.isin(['African-American', 'Caucasian'])
+y_test_bw_xgb = y_test[mask_bw_xgb]
+y_pred_xgb_bw = y_pred_xgb[mask_bw_xgb]
+sensitive_features_test_bw_xgb = sensitive_features_test[mask_bw_xgb]
+eog_xgb = equalized_odds_difference(y_test_bw_xgb, y_pred_xgb_bw, sensitive_features=sensitive_features_test_bw_xgb) if len(sensitive_features_test_bw_xgb.unique()) > 1 else np.nan
+
 summary_data_list.append({
     'Model': 'XGBoost',
     'Accuracy': acc_xgb,
@@ -1309,7 +1340,14 @@ summary_data_list.append({
 # Probabilities y_pred_proba_threshopt_base (from base LR model) from Chapter 5, Section 3.1
 acc_threshopt = accuracy_score(y_test, y_pred_threshopt)
 roc_auc_threshopt = roc_auc_score(y_test, y_pred_proba_threshopt_base)
-eog_threshopt = equalized_odds_difference(y_test, y_pred_threshopt, sensitive_features=sensitive_features_test)
+
+# Filter for Black vs. White for EOG calculation
+mask_bw_threshopt = sensitive_features_test.isin(['African-American', 'Caucasian'])
+y_test_bw_threshopt = y_test[mask_bw_threshopt]
+y_pred_threshopt_bw = y_pred_threshopt[mask_bw_threshopt]
+sensitive_features_test_bw_threshopt = sensitive_features_test[mask_bw_threshopt]
+eog_threshopt = equalized_odds_difference(y_test_bw_threshopt, y_pred_threshopt_bw, sensitive_features=sensitive_features_test_bw_threshopt) if len(sensitive_features_test_bw_threshopt.unique()) > 1 else np.nan
+
 summary_data_list.append({
     'Model': 'ThresholdOptimizer (Eq. Odds)',
     'Accuracy': acc_threshopt,

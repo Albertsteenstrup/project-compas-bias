@@ -425,9 +425,19 @@ print("XGBoost model trained.")
 # In[69]:
 
 
-# Predict on test set
-y_pred = model.predict(X_test)
-y_pred_proba = model.predict_proba(X_test)[:, 1]
+#
+# Predict probabilities on test set, then choose optimal threshold via max F1
+y_proba_lr = model.predict_proba(X_test)[:, 1]
+from sklearn.metrics import precision_recall_curve
+
+prec_lr, rec_lr, thr_lr = precision_recall_curve(y_test, y_proba_lr)
+f1_lr = 2 * prec_lr * rec_lr / (prec_lr + rec_lr + 1e-9)
+best_idx_lr = f1_lr.argmax()
+best_tau_lr = thr_lr[best_idx_lr]
+print(f"Best threshold for Logistic Regression (max F1): {best_tau_lr:.3f}")
+# Predict with optimal threshold
+y_pred = (y_proba_lr >= best_tau_lr).astype(int)
+y_pred_proba = y_proba_lr
 
 # Print classification report
 print("Classification Report:")
@@ -441,9 +451,17 @@ print(f"ROC AUC: {roc_auc:.4f}")
 # In[69b]:
 
 
-# Predict on test set with XGBoost
-y_pred_xgb = xgb_model.predict(X_test)
-y_pred_proba_xgb = xgb_model.predict_proba(X_test)[:, 1]
+#
+# Predict probabilities on test set with XGBoost, then choose optimal threshold via max F1
+y_proba_xgb = xgb_model.predict_proba(X_test)[:, 1]
+prec_xgb, rec_xgb, thr_xgb = precision_recall_curve(y_test, y_proba_xgb)
+f1_xgb = 2 * prec_xgb * rec_xgb / (prec_xgb + rec_xgb + 1e-9)
+best_idx_xgb = f1_xgb.argmax()
+best_tau_xgb = thr_xgb[best_idx_xgb]
+print(f"Best threshold for XGBoost (max F1): {best_tau_xgb:.3f}")
+# Predict with optimal threshold
+y_pred_xgb = (y_proba_xgb >= best_tau_xgb).astype(int)
+y_pred_proba_xgb = y_proba_xgb
 
 # Print classification report for XGBoost
 print("\nClassification Report (XGBoost):")
@@ -452,6 +470,14 @@ print(classification_report(y_test, y_pred_xgb))
 # Compute ROC AUC for XGBoost
 roc_auc_xgb = roc_auc_score(y_test, y_pred_proba_xgb)
 print(f"ROC AUC (XGBoost): {roc_auc_xgb:.4f}")
+
+# Reproduce ProPublica's decile-threshold recidivism rule
+df_test = df.loc[X_test.index]
+y_pred_decile = (df_test['decile_score'] >= 5).astype(int)
+print("\nProPublica Recidivism Classification (decile_score >= 5):")
+from sklearn.metrics import classification_report
+
+print(classification_report(y_test, y_pred_decile))
 
 
 # ## 4. ROC Curve
@@ -565,7 +591,7 @@ for race in test_with_race_xgb['race'].unique():
     y_true_race_xgb = test_with_race_xgb.loc[race_mask_xgb, 'y_true']
     y_pred_race_xgb = test_with_race_xgb.loc[race_mask_xgb, 'y_pred_xgb']
 
-    if len(y_true_race_xgb) > 0: # Ensure there are samples for this race
+    if len(y_true_race_xgb) > 0: # Ensure there are samples for this race subgroup
         # Compute confusion matrix for XGBoost, ensure all 4 values are returned
         cm_xgb = confusion_matrix(y_true_race_xgb, y_pred_race_xgb, labels=[0, 1])
         tn_xgb, fp_xgb, fn_xgb, tp_xgb = cm_xgb.ravel()
@@ -949,4 +975,236 @@ else:
 
 # %%
 print("\nChapter 4.1 (Enhanced Explainability Visualizations) processing complete.")
+
+# %% [markdown]
+# # Chapter 5: Mitigation Experiments
+
+# Ensure models and figures directories exist
+import os
+
+import joblib
+import matplotlib.pyplot as plt  # Included for consistency, though not directly used for plotting here
+import numpy as np
+
+# %%
+import pandas as pd
+from fairlearn.metrics import MetricFrame, equalized_odds_difference
+from fairlearn.postprocessing import ThresholdOptimizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    roc_auc_score,
+)
+
+# Assumptions:
+# - df, X_train, X_test, y_train, y_test are available from previous chapters.
+# - 'model' (original logistic regression model from Chapter 3) is available.
+#   If not, it will be loaded or retrained in section 2.1.
+
+os.makedirs("models", exist_ok=True)
+os.makedirs("figures", exist_ok=True) # For saving summary table
+
+# Define sensitive features for training and test sets
+# These will be used by Fairlearn components.
+# It's crucial that these Series align with y_train, y_test, X_train, X_test.
+sensitive_features_train = df.loc[X_train.index, 'race']
+sensitive_features_test = df.loc[X_test.index, 'race']
+
+
+# %% [markdown]
+# ## 1. Pre-processing: Reweighing (Kamiran & Calders)
+
+# %% [markdown]
+# ### 1.1 Setup and Transform (Compute Sample Weights)
+# Compute reweighing sample weights manually per Kamiran & Calders
+# %%
+# Compute reweighing sample weights manually per Kamiran & Calders
+import pandas as pd
+
+train_df = pd.DataFrame({
+    'sensitive': sensitive_features_train,
+    'label': y_train
+})
+# Marginal probabilities
+p_a = train_df['sensitive'].value_counts(normalize=True)
+p_y = train_df['label'].value_counts(normalize=True)
+# Joint probability P(A=a, Y=y)
+p_ay = train_df.groupby(['sensitive','label']).size() / len(train_df)
+# Compute sample weights: w_i = P(A=a)*P(Y=y)/P(A=a,Y=y)
+sample_weights_train = train_df.apply(
+    lambda row: (p_a.loc[row['sensitive']]*p_y.loc[row['label']] )/p_ay.loc[(row['sensitive'], row['label'])],
+    axis=1
+)
+
+# %% [markdown]
+# ### 1.2 Train Model with Sample Weights
+
+# %%
+logreg_reweigh = LogisticRegression(solver='liblinear', random_state=42)
+# Fit the model on X_train, y_train, using the computed sample_weights_train
+logreg_reweigh.fit(X_train, y_train, sample_weight=sample_weights_train)
+
+# Predict on the original (untransformed) X_test
+y_pred_reweigh = logreg_reweigh.predict(X_test)
+y_pred_proba_reweigh = logreg_reweigh.predict_proba(X_test)[:, 1]
+
+# %% [markdown]
+# ### 1.3 Metrics and Save (Reweighing)
+
+# %%
+print("Classification Report (Reweighing):")
+print(classification_report(y_test, y_pred_reweigh))
+
+roc_auc_reweigh = roc_auc_score(y_test, y_pred_proba_reweigh)
+print(f"ROC AUC (Reweighing): {roc_auc_reweigh:.4f}")
+
+joblib.dump(logreg_reweigh, 'models/logreg_reweigh.pkl')
+print("Reweighed logistic regression model saved to models/logreg_reweigh.pkl")
+
+# %% [markdown]
+# ## 2. Post-processing: ThresholdOptimizer with Equalized Odds
+
+# %% [markdown]
+# ### 2.1 Setup Baseline Model (Original Logistic Regression)
+# This step ensures the original logistic model ('model') is available.
+# It's assumed to be the one trained in Chapter 3.
+
+# %%
+# Check if 'model' is in scope and is a LogisticRegression instance.
+# If not, load from disk or retrain as a fallback.
+try:
+    if 'model' not in locals() or not isinstance(model, LogisticRegression):
+        print("Original logistic model ('model') not found or not a LogisticRegression instance. Attempting to load from 'models/logistic_model.pkl'.")
+        model = joblib.load('models/logistic_model.pkl')
+        if not isinstance(model, LogisticRegression): # Double check after loading
+             raise TypeError("Loaded model is not a LogisticRegression.")
+    print("Using existing 'model' (Logistic Regression) as baseline for ThresholdOptimizer.")
+except (FileNotFoundError, TypeError, NameError) as e: # Added NameError for 'model' not defined
+    print(f"Error with baseline model: {e}. Retraining original logistic model.")
+    model = LogisticRegression(solver='liblinear', random_state=42)
+    model.fit(X_train, y_train) # Train on original X_train, y_train without weights
+    joblib.dump(model, 'models/logistic_model.pkl') # Save if retrained
+    print("Retrained and saved original logistic model as 'models/logistic_model.pkl'.")
+
+
+# %% [markdown]
+# ### 2.2 Wrap with ThresholdOptimizer
+# The ThresholdOptimizer is fitted on the training data using the pre-trained baseline model.
+
+# %%
+threshold_optimizer = ThresholdOptimizer(
+    estimator=model,  # The pre-trained baseline logistic regression model
+    constraints='equalized_odds',  # Target fairness constraint
+    objective='accuracy_score',  # Optimization objective
+    prefit=True,  # Indicates that the estimator 'model' is already fitted
+    predict_method='predict_proba'
+)
+
+# Fit the ThresholdOptimizer. It learns new thresholds based on the baseline model's outputs.
+threshold_optimizer.fit(X_train, y_train, sensitive_features=sensitive_features_train)
+print("ThresholdOptimizer fitted with 'equalized_odds' constraint.")
+
+# %% [markdown]
+# ### 2.3 Predict and Evaluate (ThresholdOptimizer)
+
+# %%
+# Predict on X_test using the ThresholdOptimizer, providing sensitive features for the test set
+y_pred_threshopt = threshold_optimizer.predict(X_test, sensitive_features=sensitive_features_test)
+
+# Probabilities for AUC are typically from the underlying model, as ThresholdOptimizer adjusts decision thresholds.
+y_pred_proba_threshopt_base = model.predict_proba(X_test)[:, 1]
+
+print("Classification Report (ThresholdOptimizer - Equalized Odds):")
+print(classification_report(y_test, y_pred_threshopt))
+
+# Detailed FPR/FNR by race for ThresholdOptimizer
+print("\nFPR/FNR by Race (ThresholdOptimizer - Equalized Odds):")
+metrics_threshopt_grouped = []
+for race_val in sorted(sensitive_features_test.unique()):
+    mask = (sensitive_features_test == race_val)
+    if sum(mask) > 0: # Ensure there are samples for this race group in the test set
+        tn, fp, fn, tp = confusion_matrix(y_test[mask], y_pred_threshopt[mask], labels=[0,1]).ravel()
+        fpr_val = fp / (fp + tn) if (fp + tn) > 0 else 0
+        fnr_val = fn / (fn + tp) if (fn + tp) > 0 else 0
+        metrics_threshopt_grouped.append({'race': race_val, 'FPR': fpr_val, 'FNR': fnr_val, 'count': sum(mask)})
+    else:
+        metrics_threshopt_grouped.append({'race': race_val, 'FPR': np.nan, 'FNR': np.nan, 'count': 0})
+print(pd.DataFrame(metrics_threshopt_grouped))
+
+# %% [markdown]
+# ## 3. Fairness Metrics & Comparison
+
+# %% [markdown]
+# ### 3.1 Construct Summary Table
+
+# %%
+# Predictions for the original (baseline) model, if not already generated for this specific y_test
+y_pred_orig = model.predict(X_test)
+y_pred_proba_orig = model.predict_proba(X_test)[:, 1]
+
+# Helper function to compute and compile metrics for the summary table
+def get_model_summary_metrics(y_true, y_pred, y_pred_proba, sensitive_features, model_name, races_to_report=['African-American', 'Caucasian']):
+    accuracy = accuracy_score(y_true, y_pred)
+    # AUC calculated from prediction probabilities
+    auc = roc_auc_score(y_true, y_pred_proba) if y_pred_proba is not None else np.nan
+    
+    # Equalized Odds Difference using fairlearn.metrics
+    # This considers the differences in FPR and TPR between the unprivileged and privileged groups.
+    eq_odds_diff = equalized_odds_difference(y_true, y_pred, sensitive_features=sensitive_features)
+    
+    # Calculate FPR/FNR for specified groups to include in the table
+    metrics_by_group = {}
+    for race in races_to_report:
+        mask = (sensitive_features == race)
+        if sum(mask) > 0:
+            tn, fp, fn, tp = confusion_matrix(y_true[mask], y_pred[mask], labels=[0,1]).ravel()
+            metrics_by_group[f'FPR_{race}'] = fp / (fp + tn) if (fp + tn) > 0 else 0
+            metrics_by_group[f'FNR_{race}'] = fn / (fn + tp) if (fn + tp) > 0 else 0
+        else: # Handle case where a group might not be in the test set
+            metrics_by_group[f'FPR_{race}'] = np.nan
+            metrics_by_group[f'FNR_{race}'] = np.nan
+
+    return {
+        "Model": model_name,
+        "Accuracy": accuracy,
+        "AUC": auc,
+        "Equalized Odds Difference": eq_odds_diff,
+        f"FPR ({races_to_report[0]})": metrics_by_group.get(f'FPR_{races_to_report[0]}'),
+        f"FPR ({races_to_report[1]})": metrics_by_group.get(f'FPR_{races_to_report[1]}'),
+        f"FNR ({races_to_report[0]})": metrics_by_group.get(f'FNR_{races_to_report[0]}'),
+        f"FNR ({races_to_report[1]})": metrics_by_group.get(f'FNR_{races_to_report[1]}'),
+    }
+
+all_model_metrics = []
+
+# Metrics for the Original Logistic Regression Model
+all_model_metrics.append(get_model_summary_metrics(y_test, y_pred_orig, y_pred_proba_orig, sensitive_features_test, "Original Logistic Regression"))
+
+# Metrics for the Reweighing + Logistic Regression Model
+all_model_metrics.append(get_model_summary_metrics(y_test, y_pred_reweigh, y_pred_proba_reweigh, sensitive_features_test, "Reweighing + Logistic Regression"))
+
+# Metrics for the ThresholdOptimizer (on original Logistic Regression) Model
+# For AUC, using the base model's probabilities (y_pred_proba_threshopt_base) as ThresholdOptimizer adjusts prediction thresholds.
+all_model_metrics.append(get_model_summary_metrics(y_test, y_pred_threshopt, y_pred_proba_threshopt_base, sensitive_features_test, "ThresholdOptimizer (Eq. Odds)"))
+
+summary_df = pd.DataFrame(all_model_metrics)
+
+# %% [markdown]
+# ### 3.2 Save/Print Table
+
+# %%
+print("\n--- Mitigation Techniques Summary ---")
+# Ensure all columns are displayed
+with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
+    print(summary_df)
+
+# Save the summary table to a CSV file
+summary_table_path = 'figures/mitigation_summary.csv'
+summary_df.to_csv(summary_table_path, index=False)
+print(f"\nSummary table saved to {summary_table_path}")
+
+# %%
+print("\nChapter 5 (Mitigation Experiments) processing complete.")
 

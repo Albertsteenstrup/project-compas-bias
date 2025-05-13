@@ -845,3 +845,108 @@ else:
 # This empty In[] cell is just to mimic notebook structure if converted back.
 # It doesn't affect python script execution.
 
+# %% [markdown]
+# # Chapter 4.1: Enhanced Explainability Visualizations
+
+# %% [markdown]
+# ## Setup: Ensure figures/ exists
+# %%
+import os
+
+os.makedirs("figures", exist_ok=True)
+from IPython.display import display  # Added for force_plot
+
+# %% [markdown]
+# ## 1. SHAP Summary (Beeswarm)
+# Assumes `shap_values` and `X_test_shap` are available from previous cells.
+# %%
+if 'shap_values' in locals() and 'X_test_shap' in locals() and shap_values is not None and X_test_shap is not None:
+    try:
+        plt.figure() # Create a new figure to avoid overlap
+        shap.summary_plot(shap_values, X_test_shap, plot_type='dot', show=False)
+        plt.title("SHAP Summary (Beeswarm)")
+        plt.tight_layout()
+        plt.savefig('figures/shap_beeswarm.png', bbox_inches='tight')
+        plt.show()
+        print("SHAP Beeswarm summary plot saved to figures/shap_beeswarm.png")
+    except Exception as e:
+        print(f"Error generating SHAP beeswarm plot: {e}")
+else:
+    print("Skipping SHAP Beeswarm plot: shap_values or X_test_shap not available.")
+
+# %% [markdown]
+# ## 2. SHAP Dependence Plot by Race
+# Assumes `shap_values`, `X_test_shap`, and `df` (original DataFrame) are available.
+# %%
+if 'shap_values' in locals() and 'X_test_shap' in locals() and 'df' in locals() and shap_values is not None and X_test_shap is not None:
+    top_feature = 'decile_score'
+    if top_feature in X_test_shap.columns:
+        try:
+            X_test_with_race = X_test_shap.copy()
+            # Ensure indices align for correct race mapping
+            if X_test_shap.index.isin(df.index).all():
+                X_test_with_race['race'] = df.loc[X_test_shap.index, 'race']
+                
+                plt.figure() # Create a new figure
+                shap.dependence_plot(
+                    top_feature,
+                    shap_values,
+                    X_test_with_race, # Use the copy that includes the race column
+                    interaction_index='race',
+                    show=False
+                )
+                plt.title(f"SHAP Dependence: {top_feature} by Race")
+                plt.tight_layout()
+                plt.savefig(f'figures/shap_dependence_{top_feature}_by_race.png', bbox_inches='tight')
+                plt.show()
+                print(f"SHAP dependence plot for {top_feature} by race saved to figures/shap_dependence_{top_feature}_by_race.png")
+            else:
+                print(f"Error in SHAP dependence plot: X_test_shap indices not fully in df.index. Cannot map race reliably.")
+
+        except Exception as e:
+            print(f"Error generating SHAP dependence plot for {top_feature}: {e}")
+    else:
+        print(f"Skipping SHAP dependence plot: top feature '{top_feature}' not in X_test_shap.columns.")
+else:
+    print("Skipping SHAP dependence plot: shap_values, X_test_shap, or df not available.")
+
+# %% [markdown]
+# ## 3. SHAP Force Plot for Sample 0
+# Assumes `explainer`, `shap_values`, and `X_test_shap` are available.
+# %%
+if 'explainer' in locals() and 'shap_values' in locals() and 'X_test_shap' in locals() and explainer is not None and shap_values is not None and X_test_shap is not None:
+    i = 0 # Index for the test sample
+    if not X_test_shap.empty and i < len(X_test_shap):
+        try:
+            # Ensure display is available from IPython.display
+            shap.initjs() # Initialize JavaScript for force plots
+            
+            force_plot = shap.force_plot(
+                explainer.expected_value,
+                shap_values[i],
+                X_test_shap.iloc[i],
+                feature_names=X_test_shap.columns.tolist() # Pass as list
+            )
+            
+            # Display inline in notebook-like environments
+            display(force_plot)
+            
+            # Save as HTML
+            shap.save_html('figures/shap_force_sample_0.html', force_plot)
+            print(f"SHAP force plot for sample {i} saved to figures/shap_force_sample_0.html and displayed inline.")
+            
+        except NameError as ne:
+            if 'display' in str(ne):
+                print("Error displaying SHAP force plot: `display` function not found. Ensure you are in an IPython environment and `from IPython.display import display` has been run.")
+            else:
+                print(f"Error generating SHAP force plot for sample {i}: {ne}")
+        except Exception as e:
+            print(f"Error generating SHAP force plot for sample {i}: {e}")
+    else:
+        print(f"Skipping SHAP force plot: X_test_shap is empty or sample index {i} is out of bounds.")
+else:
+    print("Skipping SHAP force plot: explainer, shap_values, or X_test_shap not available.")
+
+# %%
+print("\nChapter 4.1 (Enhanced Explainability Visualizations) processing complete.")
+

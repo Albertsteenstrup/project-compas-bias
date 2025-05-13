@@ -474,10 +474,31 @@ print(f"ROC AUC (XGBoost): {roc_auc_xgb:.4f}")
 # Reproduce ProPublica's decile-threshold recidivism rule
 df_test = df.loc[X_test.index]
 y_pred_decile = (df_test['decile_score'] >= 5).astype(int)
-print("\nProPublica Recidivism Classification (decile_score >= 5):")
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix
 
+print("\nProPublica Recidivism Classification (decile_score >= 5):")
 print(classification_report(y_test, y_pred_decile))
+
+# Overall confusion matrix
+cm = confusion_matrix(y_test, y_pred_decile)
+print("Confusion Matrix (decile_score >= 5):")
+print(cm)
+
+# Confusion matrix and rates by race
+print("\nConfusion Matrix and Error Rates by Race:")
+for race in df_test['race'].unique():
+    mask = df_test['race'] == race
+    y_true_race = y_test[mask]
+    y_pred_race = y_pred_decile[mask]
+    if len(y_true_race) == 0:
+        continue
+    cm_r = confusion_matrix(y_true_race, y_pred_race, labels=[0,1])
+    tn, fp, fn, tp = cm_r.ravel()
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    fnr = fn / (fn + tp) if (fn + tp) > 0 else 0
+    print(f"{race}:")
+    print(cm_r)
+    print(f"  FPR: {fpr:.3f}, FNR: {fnr:.3f}\n")
 
 
 # ## 4. ROC Curve
@@ -1207,4 +1228,104 @@ print(f"\nSummary table saved to {summary_table_path}")
 
 # %%
 print("\nChapter 5 (Mitigation Experiments) processing complete.")
+
+# %% [markdown]
+# # Chapter 6: Model Comparison Summary
+# This chapter provides a summary table comparing the fairness and accuracy metrics of the models evaluated throughout the analysis.
+
+import numpy as np
+
+# %%
+import pandas as pd
+from sklearn.metrics import accuracy_score, roc_auc_score
+
+# The fairlearn.metrics.equalized_odds_difference function is imported in Chapter 5.
+# If running this cell block independently and that import was missed, it would be needed:
+# from fairlearn.metrics import equalized_odds_difference
+
+print("\n--- Generating Model Comparison Summary Table ---")
+
+# This code assumes that all necessary variables from previous chapters/cells are available in the global scope.
+# Key variables expected:
+# - y_test: True labels for the test set
+# - X_test: Features for the test set (used for indexing into df)
+# - df: The primary DataFrame containing all data including 'race' and 'decile_score'
+# - sensitive_features_test: Series of race for the test set (df.loc[X_test.index, 'race'])
+#
+# - For COMPAS:
+#   - y_pred_decile: Predictions based on decile_score >= 5
+# - For Logistic Regression:
+#   - y_pred: Predictions from the optimized logistic regression model
+#   - y_pred_proba: Predicted probabilities from the logistic regression model
+# - For XGBoost:
+#   - y_pred_xgb: Predictions from the XGBoost model
+#   - y_pred_proba_xgb: Predicted probabilities from the XGBoost model
+# - For ThresholdOptimizer:
+#   - y_pred_threshopt: Predictions from the ThresholdOptimizer
+#   - y_pred_proba_threshopt_base: Predicted probabilities from the base model used with ThresholdOptimizer (Logistic Regression's probabilities)
+
+summary_data_list = []
+
+# --- Model 1: COMPAS (Rule: decile_score >= 5) ---
+# Predictions y_pred_decile are from In[69b]
+# df_test (df.loc[X_test.index])['decile_score'] for ROC AUC
+compas_scores_for_auc = df.loc[X_test.index, 'decile_score']
+acc_compas = accuracy_score(y_test, y_pred_decile)
+roc_auc_compas = roc_auc_score(y_test, compas_scores_for_auc)
+eog_compas = equalized_odds_difference(y_test, y_pred_decile, sensitive_features=sensitive_features_test)
+summary_data_list.append({
+    'Model': 'COMPAS (Rule)',
+    'Accuracy': acc_compas,
+    'ROC AUC': roc_auc_compas,
+    'Equalized Odds Gap': eog_compas
+})
+
+# --- Model 2: Logistic Regression ---
+# Predictions y_pred and probabilities y_pred_proba are from In[69]
+acc_lr = accuracy_score(y_test, y_pred)
+roc_auc_lr = roc_auc_score(y_test, y_pred_proba) # y_pred_proba is y_proba_lr in In[69]
+eog_lr = equalized_odds_difference(y_test, y_pred, sensitive_features=sensitive_features_test)
+summary_data_list.append({
+    'Model': 'Logistic Regression',
+    'Accuracy': acc_lr,
+    'ROC AUC': roc_auc_lr,
+    'Equalized Odds Gap': eog_lr
+})
+
+# --- Model 3: XGBoost ---
+# Predictions y_pred_xgb and probabilities y_pred_proba_xgb are from In[69b]
+acc_xgb = accuracy_score(y_test, y_pred_xgb)
+roc_auc_xgb_val = roc_auc_score(y_test, y_pred_proba_xgb) # This is roc_auc_xgb in In[69b]
+eog_xgb = equalized_odds_difference(y_test, y_pred_xgb, sensitive_features=sensitive_features_test)
+summary_data_list.append({
+    'Model': 'XGBoost',
+    'Accuracy': acc_xgb,
+    'ROC AUC': roc_auc_xgb_val,
+    'Equalized Odds Gap': eog_xgb
+})
+
+# --- Model 4: ThresholdOptimizer (Equalized Odds) ---
+# Predictions y_pred_threshopt from Chapter 5, Section 2.3
+# Probabilities y_pred_proba_threshopt_base (from base LR model) from Chapter 5, Section 3.1
+acc_threshopt = accuracy_score(y_test, y_pred_threshopt)
+roc_auc_threshopt = roc_auc_score(y_test, y_pred_proba_threshopt_base)
+eog_threshopt = equalized_odds_difference(y_test, y_pred_threshopt, sensitive_features=sensitive_features_test)
+summary_data_list.append({
+    'Model': 'ThresholdOptimizer (Eq. Odds)',
+    'Accuracy': acc_threshopt,
+    'ROC AUC': roc_auc_threshopt,
+    'Equalized Odds Gap': eog_threshopt
+})
+
+summary_df_final_comparison = pd.DataFrame(summary_data_list)
+
+print("\n--- Model Comparison Summary (Markdown Table) ---")
+# Using tablefmt="grid" for a nicely formatted Markdown table.
+# If this causes issues in a specific environment, "pipe" or other formats can be used.
+print(summary_df_final_comparison.to_markdown(index=False, tablefmt="grid"))
+
+print("\nChapter 6 (Model Comparison Summary) processing complete.")
+
+# %%
+# End of script addition
 

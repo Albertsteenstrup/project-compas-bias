@@ -275,9 +275,9 @@ plt.figure(figsize=(6,4))
 plt.hist(df['age'], bins=30, color='skyblue', edgecolor='black')
 plt.xlabel('Age')
 plt.ylabel('Count')
-plt.title('Distribution of Age')
 plt.tight_layout()
-plt.savefig('figures/age_hist.png')
+plt.tight_layout()
+plt.savefig(f"figures/age_hist.jpg", dpi=400)
 plt.show()
 
 # %%
@@ -286,9 +286,9 @@ plt.figure(figsize=(6,4))
 plt.hist(df['priors_count'], bins=30, color='salmon', edgecolor='black')
 plt.xlabel('Priors Count')
 plt.ylabel('Count')
-plt.title('Distribution of Priors Count')
 plt.tight_layout()
-plt.savefig('figures/priors_count_hist.png')
+plt.tight_layout()
+plt.savefig(f"figures/priors_count_hist.jpg", dpi=400)
 plt.show()
 
 
@@ -302,9 +302,9 @@ plt.figure(figsize=(5,4))
 sns.countplot(x='score_text', data=df, order=['Low', 'Medium', 'High'])
 plt.xlabel('Score Text')
 plt.ylabel('Count')
-plt.title('Count of Score Text')
 plt.tight_layout()
-plt.savefig('figures/score_text_count.png')
+plt.tight_layout()
+plt.savefig(f"figures/score_text_count.jpg", dpi=400)
 plt.show()
 
 # %%
@@ -313,9 +313,9 @@ plt.figure(figsize=(8,5))
 sns.countplot(x='score_text', hue='race', data=df, order=['Low', 'Medium', 'High'])
 plt.xlabel('Score Text')
 plt.ylabel('Count')
-plt.title('Score Text by Race')
 plt.tight_layout()
-plt.savefig('figures/score_text_by_race.png')
+plt.tight_layout()
+plt.savefig(f"figures/score_text_by_race.jpg", dpi=400)
 plt.show()
 
 # %%
@@ -324,9 +324,9 @@ plt.figure(figsize=(6,4))
 sns.countplot(x='score_text', hue='sex', data=df, order=['Low', 'Medium', 'High'])
 plt.xlabel('Score Text')
 plt.ylabel('Count')
-plt.title('Score Text by Sex')
 plt.tight_layout()
-plt.savefig('figures/score_text_by_sex.png')
+plt.tight_layout()
+plt.savefig(f"figures/score_text_by_sex.jpg", dpi=400)
 plt.show()
 
 
@@ -519,7 +519,8 @@ plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('Receiver Operating Characteristic (ROC) Curve')
 plt.legend(loc="lower right")
-plt.savefig('figures/roc_curve.png')
+plt.tight_layout()
+plt.savefig(f"figures/roc_curve.jpg", dpi=400)
 plt.show()
 
 
@@ -539,7 +540,8 @@ plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('Receiver Operating Characteristic (ROC) Curve - XGBoost')
 plt.legend(loc="lower right")
-plt.savefig('figures/roc_curve_xgb.png')
+plt.tight_layout()
+plt.savefig(f"figures/roc_curve_xgb.jpg", dpi=400)
 plt.show()
 
 
@@ -768,9 +770,11 @@ else:
 if shap_values is not None and X_test_shap is not None:
     try:
         plt.figure() 
+        ax = plt.gca()
         shap.summary_plot(shap_values, X_test_shap, plot_type="bar", show=False)
-        plt.title("Mean |SHAP| Feature Importance")
-        plt.savefig('figures/shap_bar.png', bbox_inches='tight')
+        ax.grid(axis='y', visible=False)  # Remove y-axis grid
+        plt.tight_layout()
+        plt.savefig(f"figures/shap_bar.jpg", dpi=400)
         plt.show()
         print("Global feature importance plot saved to figures/shap_bar.png")
     except Exception as e_summary_plot:
@@ -802,89 +806,98 @@ if shap_values is not None and X_test_shap is not None:
 else:
     print("Skipping top-5 features table: SHAP values or X_test_shap are missing.")
 
-# ## 5. Single-Case Waterfall Explanation
+# ## 5. Single-Case Force Plot Explanation
 
 # In[79]:
-
 
 if explainer is not None and shap_values is not None and X_test_shap is not None and len(X_test_shap) > 0:
     i = 0 # Index for the test sample
     if i < len(X_test_shap):
         try:
-            plt.figure()
-            
-            # Construct SHAP Explanation object for the instance
-            shap_explanation_instance = shap.Explanation(
-                values=shap_values[i],
-                base_values=explainer.expected_value, # E[f(x)] for the model
-                data=X_test_shap.iloc[i].values,    # Actual feature values for the instance
-                feature_names=X_test_shap.columns.tolist()
+            # Ensure display is available from IPython.display
+            shap.initjs() # Initialize JavaScript for force plots
+            force_plot = shap.force_plot(
+                explainer.expected_value,
+                shap_values[i],
+                X_test_shap.iloc[i],
+                feature_names=X_test_shap.columns.tolist(),
+                matplotlib=False,  # Use JavaScript for more control
+                plot_cmap=["#ff0d57", "#1e88e5"],  # Use default colors to ensure compatibility
+                text_rotation=0    # Use 0 rotation to prevent overlapping
             )
-            
-            shap.plots.waterfall(shap_explanation_instance, show=False)
-            
-            plt.title(f"SHAP Waterfall for Test Sample {i}")
-            plt.savefig(f'figures/shap_waterfall.png', bbox_inches='tight')
-            plt.show()
-            print(f"SHAP waterfall plot for sample {i} saved to figures/shap_waterfall.png")
-        except Exception as e_waterfall:
-            print(f"Error generating SHAP waterfall plot: {e_waterfall}")
+            # Save as HTML
+            shap.save_html('figures/shap_force_sample_0.html', force_plot)
+            print(f"SHAP force plot for sample {i} saved to figures/shap_force_sample_0.html.")
+            # Additionally, save as a static PNG using matplotlib (white background)
+            try:
+                plt.figure()
+                plt.grid(False)
+                shap.plots.force(
+                    explainer.expected_value,
+                    shap_values[i],
+                    X_test_shap.iloc[i],
+                    matplotlib=True,
+                    show=False,
+                    feature_names=X_test_shap.columns.tolist()
+                )
+                plt.gcf().set_facecolor('white')
+                ax = plt.gca()
+                # Find and remove the f(x) text annotation
+                for artist in ax.get_children():
+                    if hasattr(artist, 'get_text') and 'f(x)' in str(artist.get_text()):
+                        artist.set_visible(False)
+                plt.tight_layout()
+                plt.savefig(f"figures/shap_force_sample_0.jpg", dpi=400)
+                plt.close()
+                print(f"Static SHAP force plot for sample {i} saved to figures/shap_force_sample_0.png")
+            except Exception as e_force_static:
+                print(f"Error saving static SHAP force plot as PNG: {e_force_static}")
+        except Exception as e_force:
+            print(f"Error generating SHAP force plot for sample {i}: {e_force}")
     else:
         print(f"Test sample index {i} is out of bounds for X_test_shap with length {len(X_test_shap)}.")
 else:
-    print("Skipping single-case waterfall plot: explainer, SHAP values, or X_test_shap are missing/empty.")
+    print("Skipping single-case force plot: explainer, SHAP values, or X_test_shap are missing/empty.")
 
 # %%
 # End of Chapter 4
 print("\nChapter 4 (SHAP Explainability) processing complete.")
 
 # %% [markdown]
-# ## 6. Conditional SHAP Analysis (Decile Score < 5 vs. >= 5)
-# This section explores how feature importance differs for individuals with a COMPAS decile score below 5 versus those with a decile score of 5 or greater.
+# ## 6. Conditional SHAP Analysis (Decile Score >= 5)
+# This section explores how feature importance differs for individuals with a COMPAS decile score of 5 or greater.
 
 # %%
 if explainer is not None and X_test_shap is not None and 'decile_score' in X_test_shap.columns:
     print("\nStarting Conditional SHAP Analysis based on 'decile_score'...")
 
     # Filter X_test_shap based on decile_score
-    X_test_below_5 = X_test_shap[X_test_shap['decile_score'] < 5]
     X_test_above_5 = X_test_shap[X_test_shap['decile_score'] >= 5]
 
-    print(f"Number of samples with decile_score < 5: {len(X_test_below_5)}")
     print(f"Number of samples with decile_score >= 5: {len(X_test_above_5)}")
-
-    if not X_test_below_5.empty:
-        try:
-            print("Computing SHAP values for decile_score < 5...")
-            shap_values_below_5 = explainer.shap_values(X_test_below_5)
-            
-            plt.figure()
-            shap.summary_plot(shap_values_below_5, X_test_below_5, plot_type="bar", show=False)
-            plt.title("Mean |SHAP| - Decile Score < 5")
-            plt.savefig('figures/shap_bar_decile_below_5.png', bbox_inches='tight')
-            plt.show()
-            print("Conditional SHAP summary plot for decile_score < 5 saved to figures/shap_bar_decile_below_5.png")
-        except Exception as e_shap_below:
-            print(f"Error during SHAP analysis for decile_score < 5: {e_shap_below}")
-    else:
-        print("No samples found with decile_score < 5. Skipping SHAP analysis for this subset.")
 
     if not X_test_above_5.empty:
         try:
             print("\nComputing SHAP values for decile_score >= 5...")
             shap_values_above_5 = explainer.shap_values(X_test_above_5)
 
+            # Use SHAP summary_plot directly for this subset
             plt.figure()
-            shap.summary_plot(shap_values_above_5, X_test_above_5, plot_type="bar", show=False)
+            shap.summary_plot(
+                shap_values_above_5,
+                X_test_above_5,
+                plot_type="bar",
+                show=False
+            )
             plt.title("Mean |SHAP| - Decile Score >= 5")
-            plt.savefig('figures/shap_bar_decile_above_5.png', bbox_inches='tight')
+            plt.tight_layout()
+            plt.savefig("figures/shap_bar_decile_above_5.jpg", dpi=400)
             plt.show()
-            print("Conditional SHAP summary plot for decile_score >= 5 saved to figures/shap_bar_decile_above_5.png")
+            print("Conditional SHAP summary plot for decile_score >= 5 saved to figures/shap_bar_decile_above_5.jpg")
         except Exception as e_shap_above:
             print(f"Error during SHAP analysis for decile_score >= 5: {e_shap_above}")
     else:
         print("No samples found with decile_score >= 5. Skipping SHAP analysis for this subset.")
-        
 else:
     print("\nSkipping conditional SHAP analysis: explainer, X_test_shap, or 'decile_score' column is missing.")
 
@@ -910,10 +923,12 @@ from IPython.display import display  # Added for force_plot
 if 'shap_values' in locals() and 'X_test_shap' in locals() and shap_values is not None and X_test_shap is not None:
     try:
         plt.figure() # Create a new figure to avoid overlap
+        ax = plt.gca()
         shap.summary_plot(shap_values, X_test_shap, plot_type='dot', show=False)
-        plt.title("SHAP Summary (Beeswarm)")
+        ax.grid(axis='y', visible=False)  # Remove y-axis grid
         plt.tight_layout()
-        plt.savefig('figures/shap_beeswarm.png', bbox_inches='tight')
+        plt.tight_layout()
+        plt.savefig(f"figures/shap_beeswarm.jpg", dpi=400)
         plt.show()
         print("SHAP Beeswarm summary plot saved to figures/shap_beeswarm.png")
     except Exception as e:
@@ -933,18 +948,21 @@ if 'shap_values' in locals() and 'X_test_shap' in locals() and 'df' in locals() 
             # Ensure indices align for correct race mapping
             if X_test_shap.index.isin(df.index).all():
                 X_test_with_race['race'] = df.loc[X_test_shap.index, 'race']
-                
+
+                # Separate features and race column
+                X_features_only = X_test_with_race.drop(columns=['race'])
+                # Use 'race' string as interaction_index, not the Series
                 plt.figure() # Create a new figure
                 shap.dependence_plot(
                     top_feature,
                     shap_values,
-                    X_test_with_race, # Use the copy that includes the race column
+                    X_features_only,
                     interaction_index='race',
                     show=False
                 )
-                plt.title(f"SHAP Dependence: {top_feature} by Race")
                 plt.tight_layout()
-                plt.savefig(f'figures/shap_dependence_{top_feature}_by_race.png', bbox_inches='tight')
+                plt.tight_layout()
+                plt.savefig(f'figures/shap_dependence_{top_feature}_by_race.jpg', dpi=400)
                 plt.show()
                 print(f"SHAP dependence plot for {top_feature} by race saved to figures/shap_dependence_{top_feature}_by_race.png")
             else:
@@ -972,7 +990,9 @@ if 'explainer' in locals() and 'shap_values' in locals() and 'X_test_shap' in lo
                 explainer.expected_value,
                 shap_values[i],
                 X_test_shap.iloc[i],
-                feature_names=X_test_shap.columns.tolist() # Pass as list
+                feature_names=X_test_shap.columns.tolist(), # Pass as list
+                matplotlib=False,  # Use JavaScript for more control
+                plot_cmap=["#ff0d57", "#1e88e5"]  # Use default colors to ensure compatibility
             )
             
             # Display inline in notebook-like environments

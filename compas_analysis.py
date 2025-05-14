@@ -655,6 +655,11 @@ print("XGBoost model saved to models/xgb_model.pkl")
 
 # # Chapter 4: Explainability Snapshot
 
+# -------------------------------------------------
+# Choose which test‑set row you want to explain
+sample_idx = 2          # <-- change this number as desired
+# -------------------------------------------------
+
 # ## 1. Load the Model and Test Data
 
 # In[75]:
@@ -811,31 +816,30 @@ else:
 # In[79]:
 
 if explainer is not None and shap_values is not None and X_test_shap is not None and len(X_test_shap) > 0:
-    i = 0 # Index for the test sample
-    if i < len(X_test_shap):
+    if 0 <= sample_idx < len(X_test_shap):
         try:
             # Ensure display is available from IPython.display
             shap.initjs() # Initialize JavaScript for force plots
             force_plot = shap.force_plot(
                 explainer.expected_value,
-                shap_values[i],
-                X_test_shap.iloc[i],
+                shap_values[sample_idx],
+                X_test_shap.iloc[sample_idx],
                 feature_names=X_test_shap.columns.tolist(),
                 matplotlib=False,  # Use JavaScript for more control
                 plot_cmap=["#ff0d57", "#1e88e5"],  # Use default colors to ensure compatibility
                 text_rotation=0    # Use 0 rotation to prevent overlapping
             )
             # Save as HTML
-            shap.save_html('figures/shap_force_sample_0.html', force_plot)
-            print(f"SHAP force plot for sample {i} saved to figures/shap_force_sample_0.html.")
+            shap.save_html(f'figures/shap_force_sample_{sample_idx}.html', force_plot)
+            print(f"SHAP force plot for sample {sample_idx} saved to figures/shap_force_sample_{sample_idx}.html.")
             # Additionally, save as a static PNG using matplotlib (white background)
             try:
                 plt.figure()
                 plt.grid(False)
                 shap.plots.force(
                     explainer.expected_value,
-                    shap_values[i],
-                    X_test_shap.iloc[i],
+                    shap_values[sample_idx],
+                    X_test_shap.iloc[sample_idx],
                     matplotlib=True,
                     show=False,
                     feature_names=X_test_shap.columns.tolist()
@@ -847,15 +851,15 @@ if explainer is not None and shap_values is not None and X_test_shap is not None
                     if hasattr(artist, 'get_text') and 'f(x)' in str(artist.get_text()):
                         artist.set_visible(False)
                 plt.tight_layout()
-                plt.savefig(f"figures/shap_force_sample_0.jpg", dpi=400)
+                plt.savefig(f'figures/shap_force_sample_{sample_idx}.jpg', dpi=400)
                 plt.close()
-                print(f"Static SHAP force plot for sample {i} saved to figures/shap_force_sample_0.png")
+                print(f"Static SHAP force plot for sample {sample_idx} saved to figures/shap_force_sample_{sample_idx}.png")
             except Exception as e_force_static:
                 print(f"Error saving static SHAP force plot as PNG: {e_force_static}")
         except Exception as e_force:
-            print(f"Error generating SHAP force plot for sample {i}: {e_force}")
+            print(f"Error generating SHAP force plot for sample {sample_idx}: {e_force}")
     else:
-        print(f"Test sample index {i} is out of bounds for X_test_shap with length {len(X_test_shap)}.")
+        print(f"Test sample index {sample_idx} is out of bounds for X_test_shap with length {len(X_test_shap)}.")
 else:
     print("Skipping single-case force plot: explainer, SHAP values, or X_test_shap are missing/empty.")
 
@@ -881,19 +885,15 @@ if explainer is not None and X_test_shap is not None and 'decile_score' in X_tes
             print("\nComputing SHAP values for decile_score >= 5...")
             shap_values_above_5 = explainer.shap_values(X_test_above_5)
 
-            # Use SHAP summary_plot directly for this subset
             plt.figure()
-            shap.summary_plot(
-                shap_values_above_5,
-                X_test_above_5,
-                plot_type="bar",
-                show=False
-            )
+            ax = plt.gca()
+            shap.summary_plot(shap_values_above_5, X_test_above_5, plot_type="bar", show=False)
+            ax.grid(axis='y', visible=False)  # Remove y-axis grid
             plt.title("Mean |SHAP| - Decile Score >= 5")
             plt.tight_layout()
-            plt.savefig("figures/shap_bar_decile_above_5.jpg", dpi=400)
+            plt.savefig(f"figures/shap_bar_decile_above_5.jpg", dpi=400)
             plt.show()
-            print("Conditional SHAP summary plot for decile_score >= 5 saved to figures/shap_bar_decile_above_5.jpg")
+            print("Conditional SHAP summary plot for decile_score >= 5 saved to figures/shap_bar_decile_above_5.png")
         except Exception as e_shap_above:
             print(f"Error during SHAP analysis for decile_score >= 5: {e_shap_above}")
     else:
@@ -944,30 +944,26 @@ if 'shap_values' in locals() and 'X_test_shap' in locals() and 'df' in locals() 
     top_feature = 'decile_score'
     if top_feature in X_test_shap.columns:
         try:
-            X_test_with_race = X_test_shap.copy()
-            # Ensure indices align for correct race mapping
-            if X_test_shap.index.isin(df.index).all():
-                X_test_with_race['race'] = df.loc[X_test_shap.index, 'race']
-
-                # Separate features and race column
-                X_features_only = X_test_with_race.drop(columns=['race'])
-                # Use 'race' string as interaction_index, not the Series
-                plt.figure() # Create a new figure
-                shap.dependence_plot(
-                    top_feature,
-                    shap_values,
-                    X_features_only,
-                    interaction_index='race',
-                    show=False
-                )
-                plt.tight_layout()
-                plt.tight_layout()
-                plt.savefig(f'figures/shap_dependence_{top_feature}_by_race.jpg', dpi=400)
-                plt.show()
-                print(f"SHAP dependence plot for {top_feature} by race saved to figures/shap_dependence_{top_feature}_by_race.png")
+            # Decide what to colour by.  “race” is *not* a model feature
+            # (the model uses one‑hot columns like race_African‑American, race_Caucasian, …),
+            # so we only use it if it actually exists in the feature matrix.
+            if 'race' in X_test_shap.columns:
+                interaction_index = 'race'          # safe – SHAP can find the column
             else:
-                print(f"Error in SHAP dependence plot: X_test_shap indices not fully in df.index. Cannot map race reliably.")
+                interaction_index = None            # fall back to default colouring
 
+            plt.figure()
+            shap.dependence_plot(
+                top_feature,            # x‑axis feature
+                shap_values,            # SHAP values aligned with X_test_shap
+                X_test_shap,            # feature matrix *exactly* matching shap_values
+                interaction_index=interaction_index,
+                show=False
+            )
+            plt.tight_layout()
+            plt.savefig(f"figures/shap_dependence_{top_feature}.jpg", dpi=400)
+            plt.show()
+            print(f"SHAP dependence plot for {top_feature} saved to figures/shap_dependence_{top_feature}.jpg")
         except Exception as e:
             print(f"Error generating SHAP dependence plot for {top_feature}: {e}")
     else:
@@ -976,20 +972,19 @@ else:
     print("Skipping SHAP dependence plot: shap_values, X_test_shap, or df not available.")
 
 # %% [markdown]
-# ## 3. SHAP Force Plot for Sample 0
+# ## 3. SHAP Force Plot for Sample
 # Assumes `explainer`, `shap_values`, and `X_test_shap` are available.
 # %%
 if 'explainer' in locals() and 'shap_values' in locals() and 'X_test_shap' in locals() and explainer is not None and shap_values is not None and X_test_shap is not None:
-    i = 0 # Index for the test sample
-    if not X_test_shap.empty and i < len(X_test_shap):
+    if not X_test_shap.empty and 0 <= sample_idx < len(X_test_shap):
         try:
             # Ensure display is available from IPython.display
             shap.initjs() # Initialize JavaScript for force plots
             
             force_plot = shap.force_plot(
                 explainer.expected_value,
-                shap_values[i],
-                X_test_shap.iloc[i],
+                shap_values[sample_idx],
+                X_test_shap.iloc[sample_idx],
                 feature_names=X_test_shap.columns.tolist(), # Pass as list
                 matplotlib=False,  # Use JavaScript for more control
                 plot_cmap=["#ff0d57", "#1e88e5"]  # Use default colors to ensure compatibility
@@ -999,18 +994,18 @@ if 'explainer' in locals() and 'shap_values' in locals() and 'X_test_shap' in lo
             display(force_plot)
             
             # Save as HTML
-            shap.save_html('figures/shap_force_sample_0.html', force_plot)
-            print(f"SHAP force plot for sample {i} saved to figures/shap_force_sample_0.html and displayed inline.")
+            shap.save_html(f'figures/shap_force_sample_{sample_idx}.html', force_plot)
+            print(f"SHAP force plot for sample {sample_idx} saved to figures/shap_force_sample_{sample_idx}.html and displayed inline.")
             
         except NameError as ne:
             if 'display' in str(ne):
                 print("Error displaying SHAP force plot: `display` function not found. Ensure you are in an IPython environment and `from IPython.display import display` has been run.")
             else:
-                print(f"Error generating SHAP force plot for sample {i}: {ne}")
+                print(f"Error generating SHAP force plot for sample {sample_idx}: {ne}")
         except Exception as e:
-            print(f"Error generating SHAP force plot for sample {i}: {e}")
+            print(f"Error generating SHAP force plot for sample {sample_idx}: {e}")
     else:
-        print(f"Skipping SHAP force plot: X_test_shap is empty or sample index {i} is out of bounds.")
+        print(f"Skipping SHAP force plot: X_test_shap is empty or sample index {sample_idx} is out of bounds.")
 else:
     print("Skipping SHAP force plot: explainer, shap_values, or X_test_shap not available.")
 
